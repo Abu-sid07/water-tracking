@@ -105,7 +105,7 @@ export function AchievementNotification({ achievements, onDismiss }: Achievement
             <Badge variant="outline" className={`capitalize ${rarityColor}`}>
               {achievement.rarity}
             </Badge>
-            <Badge variant="secondary">+{achievement.points} Points</Badge>
+            <Badge variant="secondary">+{achievement.points} points</Badge>
           </div>
 
           {/* Progress Indicator */}
