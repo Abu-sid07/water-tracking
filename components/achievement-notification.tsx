@@ -105,7 +105,7 @@ export function AchievementNotification({ achievements, onDismiss }: Achievement
             <Badge variant="outline" className={`capitalize ${rarityColor}`}>
               {achievement.rarity}
             </Badge>
-            <Badge variant="secondary">+{achievement.points} points</Badge>
+            <Badge variant="secondary">+{achievement.points} Points</Badge>
           </div>
 
           {/* Progress Indicator */}
@@ -114,9 +114,8 @@ export function AchievementNotification({ achievements, onDismiss }: Achievement
               {achievements.map((_, index) => (
                 <div
                   key={index}
-                  className={`w-2 h-2 rounded-full transition-colors ${
-                    index === currentIndex ? "bg-primary" : "bg-muted"
-                  }`}
+                  className={`w-2 h-2 rounded-full transition-colors ${index === currentIndex ? "bg-primary" : "bg-muted"
+                    }`}
                 />
               ))}
             </div>
