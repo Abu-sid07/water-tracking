@@ -1,9 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge" 
+import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
@@ -21,7 +21,18 @@ import {
   Area,
   AreaChart,
 } from "recharts"
-import { Calendar, TrendingUp, Droplets, Target, Award, Clock, ArrowUp, ArrowDown, Save, CalendarDays } from "lucide-react"
+import {
+  Calendar,
+  TrendingUp,
+  Droplets,
+  Target,
+  Award,
+  Clock,
+  ArrowUp,
+  ArrowDown,
+  Save,
+  CalendarDays,
+} from "lucide-react"
 import { useWaterHistory } from "@/hooks/use-water-history"
 import { useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
@@ -36,41 +47,109 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
   const [startDate, setStartDate] = useState<string>(() => {
     const date = new Date()
     date.setDate(date.getDate() - 30)
-    return date.toISOString().split('T')[0]
+    return date.toISOString().split("T")[0]
   })
-  const { getDailyStats, getWeeklyStats, getCurrentStreak, history } = useWaterHistory()
 
-  const dailyStats = getDailyStats(Number.parseInt(selectedPeriod))
-  const weeklyStats = getWeeklyStats(4)
-  const currentStreak = getCurrentStreak()
+  // ─────────────────────────────────────────────────────────────────────────
+  // FIX #3 — Pass selectedPeriod to hook so server fetches correct range
+  // ─────────────────────────────────────────────────────────────────────────
+  const { getDailyStats, getWeeklyStats, getCurrentStreak, history } =
+    useWaterHistory(Number.parseInt(selectedPeriod))
 
-  // Calculate overall statistics
-  const totalDays = dailyStats.length
-  const daysGoalReached = dailyStats.filter((day) => day.goalReached).length
-  const averageDailyIntake = Math.round(dailyStats.reduce((sum, day) => sum + day.totalIntake, 0) / totalDays)
-  const bestDay = dailyStats.reduce((best, day) => (day.totalIntake > best.totalIntake ? day : best), dailyStats[0])
-  const goalCompletionRate = Math.round((daysGoalReached / totalDays) * 100)
+  // ─────────────────────────────────────────────────────────────────────────
+  // FIX #1 — useMutation always at top level (NOT inside handleSaveAnalytics)
+  // ─────────────────────────────────────────────────────────────────────────
+  const saveAnalyticsMutation = useMutation(api.analytics.saveAnalytics)
 
-  // Prepare chart data
-  const chartData = dailyStats
-    .slice(0, 14)
-    .reverse()
-    .map((day) => ({
-      date: new Date(day.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-      intake: day.totalIntake,
-      goal: day.goal,
-      percentage: Math.round((day.totalIntake / day.goal) * 100),
-    }))
+  // ─────────────────────────────────────────────────────────────────────────
+  // FIX #4 — Pass dailyGoal prop into getDailyStats / getWeeklyStats / streak
+  // ─────────────────────────────────────────────────────────────────────────
+  const allDailyStats = useMemo(() => 
+    getDailyStats(Number.parseInt(selectedPeriod), dailyGoal),
+    [getDailyStats, selectedPeriod, dailyGoal]
+  )
 
-  const weeklyChartData = weeklyStats.reverse().map((week, index) => ({
-    week: `W${index + 1}`,
-    average: week.averageIntake,
-    goal: dailyGoal,
-    completion: Math.round((week.daysGoalReached / week.totalDays) * 100),
-  }))
+  // ─────────────────────────────────────────────────────────────────────────
+  // FIX #5 — Filter by startDate so the date picker actually works
+  // ─────────────────────────────────────────────────────────────────────────
+  const dailyStats = useMemo(() => 
+    allDailyStats.filter((day) => day.date >= startDate),
+    [allDailyStats, startDate]
+  )
 
-  const handleSaveAnalytics = () => {
-    // Save analytics data to Convex
+  const weeklyStats  = useMemo(() => 
+    getWeeklyStats(4, dailyGoal),
+    [getWeeklyStats, dailyGoal]
+  )
+  
+  const currentStreak = useMemo(() => 
+    getCurrentStreak(dailyGoal),
+    [getCurrentStreak, dailyGoal]
+  )
+
+  // ── Overall statistics ───────────────────────────────────────────────────
+  const stats = useMemo(() => {
+    const hasData            = dailyStats.length > 0
+    const totalDays          = hasData ? dailyStats.length : 1 // guard divide-by-zero
+    const daysGoalReached    = dailyStats.filter((day) => day.goalReached).length
+    const averageDailyIntake = hasData
+      ? Math.round(dailyStats.reduce((sum, day) => sum + day.totalIntake, 0) / dailyStats.length)
+      : 0
+    
+    const bestDay = hasData
+      ? dailyStats.reduce(
+          (best, day) => (day.totalIntake > best.totalIntake ? day : best),
+          dailyStats[0]
+        )
+      : null
+    
+    const goalCompletionRate = hasData
+      ? Math.round((daysGoalReached / dailyStats.length) * 100)
+      : 0
+
+    return {
+      hasData,
+      totalDays,
+      daysGoalReached,
+      averageDailyIntake,
+      bestDay,
+      goalCompletionRate
+    }
+  }, [dailyStats])
+
+  const { hasData, totalDays, daysGoalReached, averageDailyIntake, bestDay, goalCompletionRate } = stats
+
+  // ── Chart data ───────────────────────────────────────────────────────────
+  const chartData = useMemo(() => 
+    dailyStats
+      .slice(0, 14)
+      .reverse()
+      .map((day) => ({
+        date: new Date(day.date).toLocaleDateString("en-IN", {
+          month: "short",
+          day: "numeric",
+        }),
+        intake: day.totalIntake,
+        goal: day.goal || dailyGoal || 2000,
+        percentage: day.goal > 0 ? Math.round((day.totalIntake / day.goal) * 100) : 0,
+      })),
+    [dailyStats, dailyGoal]
+  )
+
+  const weeklyChartData = useMemo(() => 
+    weeklyStats.reverse().map((week, index) => ({
+      week: `W${index + 1}`,
+      average: week.averageIntake,
+      goal: dailyGoal || 2000,
+      completion: week.totalDays > 0 ? Math.round((week.daysGoalReached / week.totalDays) * 100) : 0,
+    })),
+    [weeklyStats, dailyGoal]
+  )
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // FIX #1 — useMutation result used here (no hook inside function body)
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleSaveAnalytics = async () => {
     const analyticsData = {
       startDate,
       selectedPeriod,
@@ -79,16 +158,18 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
       currentStreak,
       timestamp: new Date().toISOString(),
     }
-    
-    // If a Convex user is logged in, call mutation
+
     try {
       const currentUser = localStorage.getItem("currentUser")
       if (currentUser) {
         const parsed = JSON.parse(currentUser) as any
         if (parsed.convexId) {
-          const saveAnalytics = useMutation(api.analytics.saveAnalytics)
-          // Fire and forget
-          saveAnalytics({ userId: parsed.convexId, startDate, period: selectedPeriod, payload: JSON.stringify(analyticsData) })
+          await saveAnalyticsMutation({
+            userId: parsed.convexId,
+            startDate,
+            period: selectedPeriod,
+            payload: JSON.stringify(analyticsData),
+          })
           alert("Analytics data saved successfully!")
           return
         }
@@ -97,7 +178,6 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
       console.warn("Failed to save analytics to Convex:", e)
     }
 
-    // Fallback: log to console
     console.log("Saving analytics data (local):", analyticsData)
     alert("Analytics data saved (local)")
   }
@@ -126,7 +206,9 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="start-date" className="text-foreground">Start Date</Label>
+              <Label htmlFor="start-date" className="text-foreground">
+                Start Date
+              </Label>
               <Input
                 id="start-date"
                 type="date"
@@ -137,7 +219,15 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
             </div>
             <div className="space-y-2">
               <Label className="text-foreground">Period</Label>
-              <Select value={selectedPeriod} onValueChange={(value: "7" | "30" | "90") => setSelectedPeriod(value)}>
+              <Select
+                value={selectedPeriod}
+                onValueChange={(value: "7" | "30" | "90") => {
+                  setSelectedPeriod(value)
+                  const date = new Date()
+                  date.setDate(date.getDate() - Number.parseInt(value))
+                  setStartDate(date.toISOString().split("T")[0])
+                }}
+              >
                 <SelectTrigger className="text-foreground">
                   <SelectValue />
                 </SelectTrigger>
@@ -169,14 +259,22 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
               </div>
               <div>
                 <p className="text-sm text-foreground">Avg Daily Intake</p>
-                <p className="text-xl font-bold text-foreground">{averageDailyIntake}ml</p>
+                <p className="text-xl font-bold text-foreground">
+                  {averageDailyIntake}ml
+                </p>
                 <div className="flex items-center gap-1 text-xs">
                   {averageDailyIntake >= dailyGoal ? (
                     <ArrowUp className="h-3 w-3 text-green-500" />
                   ) : (
                     <ArrowDown className="h-3 w-3 text-red-500" />
                   )}
-                  <span className={averageDailyIntake >= dailyGoal ? "text-green-500" : "text-red-500"}>
+                  <span
+                    className={
+                      averageDailyIntake >= dailyGoal
+                        ? "text-green-500"
+                        : "text-red-500"
+                    }
+                  >
                     {Math.round((averageDailyIntake / dailyGoal) * 100)}% of goal
                   </span>
                 </div>
@@ -193,7 +291,9 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
               </div>
               <div>
                 <p className="text-sm text-foreground">Goal Completion</p>
-                <p className="text-xl font-bold text-foreground">{goalCompletionRate}%</p>
+                <p className="text-xl font-bold text-foreground">
+                  {goalCompletionRate}%
+                </p>
                 <p className="text-xs text-foreground">
                   {daysGoalReached} of {totalDays} days
                 </p>
@@ -210,9 +310,15 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
               </div>
               <div>
                 <p className="text-sm text-foreground">Current Streak</p>
-                <p className="text-xl font-bold text-foreground">{currentStreak} days</p>
+                <p className="text-xl font-bold text-foreground">
+                  {currentStreak} days
+                </p>
                 <Badge variant="secondary" className="text-xs">
-                  {currentStreak >= 7 ? "Amazing!" : currentStreak >= 3 ? "Great!" : "Keep going!"}
+                  {currentStreak >= 7
+                    ? "Amazing!"
+                    : currentStreak >= 3
+                    ? "Great!"
+                    : "Keep going!"}
                 </Badge>
               </div>
             </div>
@@ -227,9 +333,13 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
               </div>
               <div>
                 <p className="text-sm text-foreground">Best Day</p>
-                <p className="text-xl font-bold text-foreground">{bestDay?.totalIntake || 0}ml</p>
+                <p className="text-xl font-bold text-foreground">
+                  {bestDay?.totalIntake ?? 0}ml
+                </p>
                 <p className="text-xs text-foreground">
-                  {bestDay ? new Date(bestDay.date).toLocaleDateString() : "No data"}
+                  {bestDay
+                    ? new Date(bestDay.date).toLocaleDateString()
+                    : "No data"}
                 </p>
               </div>
             </div>
@@ -240,9 +350,15 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
       {/* Charts */}
       <Tabs defaultValue="daily" className="space-y-4">
         <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="daily" className="text-foreground">Daily Intake</TabsTrigger>
-          <TabsTrigger value="weekly" className="text-foreground">Weekly Average</TabsTrigger>
-          <TabsTrigger value="progress" className="text-foreground">Progress Trend</TabsTrigger>
+          <TabsTrigger value="daily" className="text-foreground">
+            Daily Intake
+          </TabsTrigger>
+          <TabsTrigger value="weekly" className="text-foreground">
+            Weekly Average
+          </TabsTrigger>
+          <TabsTrigger value="progress" className="text-foreground">
+            Progress Trend
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="daily" className="space-y-4">
@@ -370,15 +486,21 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
         </CardHeader>
         <CardContent>
           <div className="space-y-3 max-h-60 overflow-y-auto">
-            {(history.length > 0 ? history.slice(0, 10) : (() => {
-              try {
-                const raw = localStorage.getItem('recentActivity')
-                return raw ? JSON.parse(raw) : []
-              } catch (e) {
-                return []
-              }
-            })()).map((entry: any) => (
-              <div key={entry.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+            {(history.length > 0
+              ? history.slice(0, 10)
+              : (() => {
+                  try {
+                    const raw = localStorage.getItem("recentActivity")
+                    return raw ? JSON.parse(raw) : []
+                  } catch (e) {
+                    return []
+                  }
+                })()
+            ).map((entry: any) => (
+              <div
+                key={entry.id}
+                className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
+              >
                 <div className="flex items-center gap-3">
                   <div className="p-1 bg-primary/10 rounded">
                     <Droplets className="h-4 w-4 text-primary" />
@@ -387,15 +509,27 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
                     <p className="font-medium text-foreground">{entry.amount}ml</p>
                     <p className="text-xs text-foreground">
                       {new Date(entry.timestamp).toLocaleDateString()} at{" "}
-                      {new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      {new Date(entry.timestamp).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
                     </p>
                   </div>
                 </div>
                 <Badge variant="outline" className="text-xs">
-                  {entry.amount >= 500 ? "Large" : entry.amount >= 250 ? "Medium" : "Small"}
+                  {entry.amount >= 500
+                    ? "Large"
+                    : entry.amount >= 250
+                    ? "Medium"
+                    : "Small"}
                 </Badge>
               </div>
             ))}
+            {history.length === 0 && (
+              <p className="text-sm text-foreground text-center py-4">
+                No activity recorded yet. Start tracking your water intake!
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

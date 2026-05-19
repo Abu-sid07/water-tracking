@@ -372,6 +372,7 @@ export function useAchievements() {
   }, [achievements])
 
   const getProgressPercentage = useCallback((achievement: Achievement) => {
+    if (!achievement.requirement || achievement.requirement <= 0) return achievement.unlocked ? 100 : 0
     return Math.min((achievement.progress / achievement.requirement) * 100, 100)
   }, [])
 

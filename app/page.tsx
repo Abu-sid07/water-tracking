@@ -178,11 +178,11 @@ export default function Page() {
 						todayWaterIntake={todayWaterIntake}
 						dailyGoal={dailyGoal}
 						userProfile={userProfile}
-						progressPercentage={Math.min((todayWaterIntake / dailyGoal) * 100, 100)}
+						progressPercentage={dailyGoal > 0 ? Math.min((todayWaterIntake / dailyGoal) * 100, 100) : 0}
 						addWater={addWater}
 						undoLastIntake={undoLastIntake}
 						cupsCompleted={Math.floor(todayWaterIntake / 250)}
-						totalCups={Math.ceil(dailyGoal / 250)}
+						totalCups={Math.ceil((dailyGoal || 2000) / 250)}
 						lastDrinkTime={new Date(history[0]?.timestamp || Date.now() - 3600 * 1000)}
 						formatTimeAgo={(d: Date) => {
 							const mins = Math.floor((Date.now() - d.getTime()) / 60000)

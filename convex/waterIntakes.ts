@@ -8,13 +8,14 @@ export const addWaterIntake = mutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now()
-    const today = new Date(now).toISOString().split("T")[0] // YYYY-MM-DD
+    const isoDate = new Date(now).toISOString()
+    const dateOnly = isoDate.split("T")[0] // YYYY-MM-DD
 
     const intakeId = await ctx.db.insert("waterIntakes", {
       userId: args.userId,
       amount: args.amount,
       timestamp: now,
-      date: today,
+      date: isoDate, // Use full ISO string as requested by user
     })
 
     // Check if daily goal is reached and award achievement
@@ -22,10 +23,19 @@ export const addWaterIntake = mutation({
     if (user) {
       const todayIntakes = await ctx.db
         .query("waterIntakes")
-        .withIndex("by_user_and_date", (q) => q.eq("userId", args.userId).eq("date", today))
+        .withIndex("by_user_and_date", (q) => q.eq("userId", args.userId).eq("date", dateOnly))
         .collect()
 
-      const totalToday = todayIntakes.reduce((sum, intake) => sum + intake.amount, 0)
+      // Also search for intakes with full ISO string starting with today's date
+      const allIntakes = await ctx.db
+        .query("waterIntakes")
+        .withIndex("by_user", (q) => q.eq("userId", args.userId))
+        .filter((q) => q.gte(q.field("date"), dateOnly))
+        .collect()
+      
+      const todayIntakesFiltered = allIntakes.filter(i => i.date.startsWith(dateOnly))
+
+      const totalToday = todayIntakesFiltered.reduce((sum, intake) => sum + intake.amount, 0)
 
       if (totalToday >= user.dailyGoal) {
         // Check if achievement already exists for today
@@ -33,7 +43,7 @@ export const addWaterIntake = mutation({
           .query("achievements")
           .withIndex("by_user", (q) => q.eq("userId", args.userId))
           .filter((q) =>
-            q.and(q.eq(q.field("type"), "daily_goal"), q.gte(q.field("unlockedAt"), new Date(today).getTime())),
+            q.and(q.eq(q.field("type"), "daily_goal"), q.gte(q.field("unlockedAt"), new Date(dateOnly).getTime())),
           )
           .first()
 
@@ -59,23 +69,28 @@ export const getTodayIntakes = query({
   handler: async (ctx, args) => {
     const today = new Date().toISOString().split("T")[0]
 
+    // Use a range query to find all entries for today (handles both YYYY-MM-DD and ISO strings)
     return await ctx.db
       .query("waterIntakes")
-      .withIndex("by_user_and_date", (q) => q.eq("userId", args.userId).eq("date", today))
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .filter((q) => q.gte(q.field("date"), today))
       .collect()
+      .then(results => results.filter(r => r.date.startsWith(today)))
   },
 })
 
 export const getWeeklyIntakes = query({
-  args: { userId: v.id("users") },
+  args: { userId: v.id("users"), days: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const now = new Date()
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+    const days = args.days ?? 7
+    const cutoffDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
+    const cutoffStr = cutoffDate.toISOString().split("T")[0]
 
     return await ctx.db
       .query("waterIntakes")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .filter((q) => q.gte(q.field("timestamp"), weekAgo.getTime()))
+      .filter((q) => q.gte(q.field("date"), cutoffStr))
       .collect()
   },
 })
