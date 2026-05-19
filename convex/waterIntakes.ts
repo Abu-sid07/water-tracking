@@ -80,10 +80,13 @@ export const getTodayIntakes = query({
 })
 
 export const getWeeklyIntakes = query({
-  args: { userId: v.id("users"), days: v.optional(v.number()) },
+  args: { 
+    userId: v.id("users"), 
+    days: v.number() 
+  },
   handler: async (ctx, args) => {
     const now = new Date()
-    const days = args.days ?? 7
+    const days = args.days
     const cutoffDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
     const cutoffStr = cutoffDate.toISOString().split("T")[0]
 

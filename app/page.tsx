@@ -2,7 +2,7 @@
 "use client"
 
 import React, { useEffect, useState } from "react"
-import { Droplets, Trophy, Target as TargetIcon, Settings, BarChart3, User, LogIn, LogOut } from "lucide-react"
+import { Droplets, Trophy, Target as TargetIcon, Settings, BarChart3, User, LogIn, LogOut, Menu, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import Tracker from "@/components/tracker"
 import { AnalyticsDashboard } from "@/components/analytics-dashboard"
@@ -17,6 +17,8 @@ import { useAchievements } from "@/hooks/use-achievements"
 import { useAuth } from "@/hooks/use-auth"
 import { useReminderTimer } from "@/hooks/use-reminder-timer"
 import { useNotifications } from "@/hooks/use-notifications"
+import { useReminder } from "@/hooks/use-reminder"
+import { calculateDailyGoal } from "@/lib/goal-calculator"
 
 interface UserProfile {
 	name: string
@@ -37,9 +39,10 @@ export default function Page() {
 
 	const [currentView, setCurrentView] = useState<'tracker'|'analytics'|'achievements'|'profile'|'reminder'>('tracker')
 	const [showReminder, setShowReminder] = useState(false)
+	const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
 
 	const { addWaterIntake, undoLastIntake, todayWaterIntake, history } = useWaterHistory()
-	const { achievements, userStats, newlyUnlocked, dismissNewAchievements, getProgressPercentage } = useAchievements()
+	const { achievements, userStats, newlyUnlocked, dismissNewAchievements, getProgressPercentage, updateProgress } = useAchievements()
 
 	const { requestPermission } = useNotifications()
 
@@ -48,6 +51,26 @@ export default function Page() {
 	const [reminderInterval, setReminderInterval] = useState(60)
 	// keep timer in sync with state
 	const reminderTimer = useReminderTimer({ interval: reminderInterval, onReminder: () => setShowReminder(true), enabled: reminderEnabled })
+
+	// New persistent reminder hook
+	const dailyGoal = userProfile ? calculateDailyGoal(userProfile) : 3000
+	useReminder(reminderInterval, reminderEnabled, dailyGoal)
+
+	// Register service worker
+	useEffect(() => {
+		if ('serviceWorker' in navigator) {
+			window.addEventListener('load', () => {
+				navigator.serviceWorker.register('/sw.js').then(
+					(registration) => {
+						console.log('ServiceWorker registration successful with scope: ', registration.scope)
+					},
+					(err) => {
+						console.log('ServiceWorker registration failed: ', err)
+					}
+				)
+			})
+		}
+	}, [])
 
 	// When interval or enabled changes, reset timer so change applies immediately
 	useEffect(() => {
@@ -78,29 +101,18 @@ export default function Page() {
 		}
 	}, [userProfile, user?.id])
 
-	const calculateDailyGoal = (profile: UserProfile) => {
-		if (profile.customGoal) return profile.customGoal
-		let base = profile.weight * 35
-		if (profile.activityLevel === 'high') base *= 1.3
-		if (profile.activityLevel === 'moderate') base *= 1.15
-		if (profile.climate === 'hot') base *= 1.2
-		if (profile.climate === 'cool') base *= 0.95
-		return Math.round(base)
-	}
-
-	const dailyGoal = userProfile ? calculateDailyGoal(userProfile) : 3000
-
 	const addWater = (amount: number) => {
 		try {
 			// record local recent activity for immediate UX
 			const entry = { id: `${Date.now()}`, amount, timestamp: Date.now(), date: new Date().toISOString().split('T')[0] }
-			const raw = localStorage.getItem('recentActivity')
+			const raw = localStorage.getItem(`recentActivity_${user?.id}`)
 			const arr = raw ? JSON.parse(raw) : []
 			arr.unshift(entry)
-			localStorage.setItem('recentActivity', JSON.stringify(arr.slice(0, 100)))
+			localStorage.setItem(`recentActivity_${user?.id}`, JSON.stringify(arr.slice(0, 10)))
 		} catch (e) {}
 
 		addWaterIntake(amount)
+		updateProgress(amount, dailyGoal, 0) // streak will be recalculated in hook
 		reminderTimer.resetTimer()
 	}
 
@@ -140,24 +152,89 @@ export default function Page() {
 	return (
 		<div className="min-h-screen bg-background p-4 md:p-6">
 			<div className="mx-auto max-w-4xl space-y-6">
-				<div className="flex items-center justify-between bg-card border rounded-lg p-4">
-					<div className="flex items-center gap-2">
-						<Droplets className="h-6 w-6 text-primary" />
-						<h2 className="text-lg font-semibold">Hydration Tracker</h2>
+				{/* Responsive Navbar */}
+				<nav className="sticky top-0 z-50 bg-card/80 backdrop-blur-md border rounded-xl p-3 shadow-sm">
+					<div className="flex items-center justify-between">
+						<div className="flex items-center gap-2 px-2">
+							<div className="p-1.5 bg-primary/10 rounded-lg">
+								<Droplets className="h-5 w-5 text-primary" />
+							</div>
+							<h2 className="text-lg font-bold bg-gradient-to-r from-primary to-blue-600 bg-clip-text text-transparent">
+								Hydration
+							</h2>
+						</div>
+
+						{/* Desktop Menu */}
+						<div className="hidden md:flex items-center gap-1">
+							<Button variant={currentView === 'tracker' ? 'secondary' : 'ghost'} size="sm" onClick={() => setCurrentView('tracker')} className="flex items-center gap-2"><TargetIcon className="h-4 w-4" /> Tracker</Button>
+							<Button variant={currentView === 'achievements' ? 'secondary' : 'ghost'} size="sm" onClick={() => setCurrentView('achievements')} className="flex items-center gap-2"><Trophy className="h-4 w-4" /> Achievements</Button>
+							<Button variant={currentView === 'analytics' ? 'secondary' : 'ghost'} size="sm" onClick={() => setCurrentView('analytics')} className="flex items-center gap-2"><BarChart3 className="h-4 w-4" /> Analytics</Button>
+							<div className="w-px h-6 bg-border mx-1" />
+							<Button variant={currentView === 'profile' ? 'secondary' : 'ghost'} size="sm" onClick={() => setCurrentView('profile')} className="flex items-center gap-2"><User className="h-4 w-4" /> Profile</Button>
+							<Button variant={currentView === 'reminder' ? 'secondary' : 'ghost'} size="sm" onClick={() => setCurrentView('reminder')} className="flex items-center gap-2"><Settings className="h-4 w-4" /> Reminders</Button>
+							<Button variant="ghost" size="sm" onClick={handleLogout} className="flex items-center gap-2 text-destructive hover:text-destructive hover:bg-destructive/10 transition-colors"><LogOut className="h-4 w-4" /> Logout</Button>
+						</div>
+
+						{/* Mobile Menu Button */}
+						<Button 
+							variant="ghost" 
+							size="icon" 
+							className="md:hidden"
+							onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+						>
+							{isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+						</Button>
 					</div>
 
-					<div className="flex gap-2">
-						<Button variant={currentView === 'tracker' ? 'default' : 'outline'} size="sm" onClick={() => setCurrentView('tracker')} className="flex items-center gap-2"><TargetIcon className="h-4 w-4" /> Tracker</Button>
-						<Button variant={currentView === 'achievements' ? 'default' : 'outline'} size="sm" onClick={() => setCurrentView('achievements')} className="flex items-center gap-2"><Trophy className="h-4 w-4" /> Achievements</Button>
-						<Button variant={currentView === 'analytics' ? 'default' : 'outline'} size="sm" onClick={() => setCurrentView('analytics')} className="flex items-center gap-2"><BarChart3 className="h-4 w-4" /> Analytics</Button>
-					</div>
-
-					<div className="flex gap-2">
-						<Button variant={currentView === 'profile' ? 'default' : 'outline'} size="sm" onClick={() => setCurrentView('profile')} className="flex items-center gap-2"><User className="h-4 w-4" /> Profile</Button>
-						<Button variant={currentView === 'reminder' ? 'default' : 'outline'} size="sm" onClick={() => setCurrentView('reminder')} className="flex items-center gap-2"><Settings className="h-4 w-4" /> Reminders</Button>
-						<Button variant="outline" size="sm" onClick={handleLogout} className="flex items-center gap-2 text-destructive"><LogOut className="h-4 w-4" /> Logout</Button>
-					</div>
-				</div>
+					{/* Mobile Menu Dropdown */}
+					{isMobileMenuOpen && (
+						<div className="md:hidden pt-3 pb-2 space-y-1 animate-in slide-in-from-top duration-200">
+							<Button 
+								variant={currentView === 'tracker' ? 'secondary' : 'ghost'} 
+								className="w-full justify-start gap-3 h-11" 
+								onClick={() => { setCurrentView('tracker'); setIsMobileMenuOpen(false) }}
+							>
+								<TargetIcon className="h-5 w-5" /> Tracker
+							</Button>
+							<Button 
+								variant={currentView === 'achievements' ? 'secondary' : 'ghost'} 
+								className="w-full justify-start gap-3 h-11" 
+								onClick={() => { setCurrentView('achievements'); setIsMobileMenuOpen(false) }}
+							>
+								<Trophy className="h-5 w-5" /> Achievements
+							</Button>
+							<Button 
+								variant={currentView === 'analytics' ? 'secondary' : 'ghost'} 
+								className="w-full justify-start gap-3 h-11" 
+								onClick={() => { setCurrentView('analytics'); setIsMobileMenuOpen(false) }}
+							>
+								<BarChart3 className="h-5 w-5" /> Analytics
+							</Button>
+							<div className="h-px bg-border my-2" />
+							<Button 
+								variant={currentView === 'profile' ? 'secondary' : 'ghost'} 
+								className="w-full justify-start gap-3 h-11" 
+								onClick={() => { setCurrentView('profile'); setIsMobileMenuOpen(false) }}
+							>
+								<User className="h-5 w-5" /> Profile
+							</Button>
+							<Button 
+								variant={currentView === 'reminder' ? 'secondary' : 'ghost'} 
+								className="w-full justify-start gap-3 h-11" 
+								onClick={() => { setCurrentView('reminder'); setIsMobileMenuOpen(false) }}
+							>
+								<Settings className="h-5 w-5" /> Reminders
+							</Button>
+							<Button 
+								variant="ghost" 
+								className="w-full justify-start gap-3 h-11 text-destructive hover:bg-destructive/10" 
+								onClick={handleLogout}
+							>
+								<LogOut className="h-5 w-5" /> Logout
+							</Button>
+						</div>
+					)}
+				</nav>
 
 				{currentView === 'analytics' ? (
 					<AnalyticsDashboard dailyGoal={dailyGoal} onClose={() => setCurrentView('tracker')} />

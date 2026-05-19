@@ -1,6 +1,14 @@
 import { mutation, query } from "./_generated/server"
 import { v } from "convex/values"
 
+async function hashPassword(password: string) {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(password)
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("")
+}
+
 export const createUser = mutation({
   args: {
     name: v.string(),
@@ -47,7 +55,7 @@ export const createUser = mutation({
       }
 
       if (args.password) {
-        insertObj.passwordHash = require("crypto").createHash("sha256").update(args.password).digest("hex")
+        insertObj.passwordHash = await hashPassword(args.password)
       }
 
       const userId = await ctx.db.insert("users", insertObj)
@@ -76,8 +84,7 @@ export const authenticate = mutation({
 
     if (!user) return { success: false, error: "User not found" }
 
-    const crypto = require("crypto")
-    const hash = crypto.createHash("sha256").update(args.password).digest("hex")
+    const hash = await hashPassword(args.password)
 
     const storedHash = (user as any).passwordHash
     if (storedHash && storedHash === hash) {

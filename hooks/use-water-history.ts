@@ -4,12 +4,13 @@ import { useState, useEffect } from "react"
 import { useMutation, useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { Id } from "@/convex/_generated/dataModel"
+import { calculateDailyGoal } from "@/lib/goal-calculator"
 
 export interface WaterIntakeEntry {
   id: string
   amount: number
   timestamp: number
-  date: string // YYYY-MM-DD
+  date: string // YYYY-MM-DD or ISO string
 }
 
 export interface DailyStats {
@@ -35,6 +36,52 @@ export function useWaterHistory(period: number = 7) {
   const [history, setHistory] = useState<WaterIntakeEntry[]>([])
   const [todayWaterIntake, setTodayWaterIntake] = useState(0)
   const [convexId, setConvexId] = useState<Id<"users"> | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
+
+  // Get daily goal based on weight
+  const [dailyGoal, setDailyGoal] = useState(2000)
+
+  // ── Read user info from localStorage on mount ─────────────────────────────
+  useEffect(() => {
+    try {
+      const currentUser = localStorage.getItem("currentUser")
+      if (currentUser) {
+        const parsed = JSON.parse(currentUser) as any
+        if (parsed.convexId) {
+          setConvexId(parsed.convexId as Id<"users">)
+        }
+        if (parsed.id) {
+          setUserId(parsed.id)
+          
+          // Load history from user-scoped storage to avoid flicker
+          const savedHistory = localStorage.getItem(`waterHistory_${parsed.id}`)
+          if (savedHistory) {
+            setHistory(JSON.parse(savedHistory))
+          }
+
+          const savedToday = localStorage.getItem(`todayWaterIntake_${parsed.id}`)
+          if (savedToday) {
+            const parsedToday = JSON.parse(savedToday)
+            const today = new Date().toISOString().split("T")[0]
+            if (parsedToday.date === today) {
+              setTodayWaterIntake(parsedToday.amount)
+            }
+          }
+          
+          // Load profile to get weight for goal calculation
+          const profileRaw = localStorage.getItem(`userProfile_${parsed.id}`)
+          if (profileRaw) {
+            const profile = JSON.parse(profileRaw)
+            if (profile.weight) {
+              setDailyGoal(calculateDailyGoal(profile))
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [])
 
   // ─────────────────────────────────────────────────────────────────────────
   // FIX #2 — useQuery always called unconditionally; "skip" handles no-user
@@ -54,21 +101,6 @@ export function useWaterHistory(period: number = 7) {
   const deleteIntakeMutation = useMutation(api.waterIntakes.deleteIntake)
 
 
-  // ── Read convexId from localStorage on mount ─────────────────────────────
-  useEffect(() => {
-    try {
-      const currentUser = localStorage.getItem("currentUser")
-      if (currentUser) {
-        const parsed = JSON.parse(currentUser) as any
-        if (parsed.convexId) {
-          setConvexId(parsed.convexId as Id<"users">)
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
-  }, [])
-
   // ── Merge weekly server data into local history ───────────────────────────
   useEffect(() => {
     try {
@@ -87,13 +119,20 @@ export function useWaterHistory(period: number = 7) {
             ...mapped.filter((m) => !existingTs.has(m.timestamp)),
             ...prev,
           ]
-          return merged.sort((a, b) => b.timestamp - a.timestamp)
+          const sorted = merged.sort((a, b) => b.timestamp - a.timestamp)
+          
+          // Save to user-scoped localStorage
+          if (userId) {
+            localStorage.setItem(`waterHistory_${userId}`, JSON.stringify(sorted))
+          }
+          
+          return sorted
         })
       }
     } catch (e) {
       // ignore
     }
-  }, [weeklyServerData])
+  }, [weeklyServerData, userId])
 
   // ── Sync today's server intakes & compute authoritative total ────────────
   useEffect(() => {
@@ -107,30 +146,30 @@ export function useWaterHistory(period: number = 7) {
       }))
 
       const today = new Date().toISOString().split("T")[0]
-    const serverTs = new Set(mapped.map((m) => m.timestamp))
+      const serverTs = new Set(mapped.map((m) => m.timestamp))
 
-    setHistory((prev) => {
-      const pendingLocal = prev.filter(
-        (p) => p.date.startsWith(today) && !serverTs.has(p.timestamp)
-      )
-      const preservedOld = prev.filter((p) => !p.date.startsWith(today))
-      const merged = [...mapped, ...pendingLocal, ...preservedOld].sort(
-        (a, b) => b.timestamp - a.timestamp
-      )
+      setHistory((prev) => {
+        const pendingLocal = prev.filter(
+          (p) => p.date.startsWith(today) && !serverTs.has(p.timestamp)
+        )
+        const preservedOld = prev.filter((p) => !p.date.startsWith(today))
+        const merged = [...mapped, ...pendingLocal, ...preservedOld].sort(
+          (a, b) => b.timestamp - a.timestamp
+        )
 
-      const serverTotal = mapped
-        .filter((m) => m.date.startsWith(today))
-        .reduce((s, e) => s + e.amount, 0)
+        const serverTotal = mapped
+          .filter((m) => m.date.startsWith(today))
+          .reduce((s, e) => s + e.amount, 0)
         const pendingTotal = pendingLocal.reduce((s, e) => s + e.amount, 0)
         const todayTotal = serverTotal + pendingTotal
 
-        try {
+        // Save to user-scoped localStorage
+        if (userId) {
           localStorage.setItem(
-            "todayWaterIntake",
+            `todayWaterIntake_${userId}`,
             JSON.stringify({ date: today, amount: todayTotal })
           )
-        } catch (e) {
-          // ignore
+          localStorage.setItem(`waterHistory_${userId}`, JSON.stringify(merged))
         }
 
         setTodayWaterIntake(todayTotal)
@@ -139,7 +178,7 @@ export function useWaterHistory(period: number = 7) {
     } catch (e) {
       // ignore
     }
-  }, [todayServerIntakes])
+  }, [todayServerIntakes, userId])
 
   // ── Add water intake ──────────────────────────────────────────────────────
   const addWaterIntake = (amount: number) => {
@@ -221,6 +260,11 @@ export function useWaterHistory(period: number = 7) {
       setHistory([])
       setTodayWaterIntake(0)
 
+      if (userId) {
+        localStorage.removeItem(`waterHistory_${userId}`)
+        localStorage.removeItem(`todayWaterIntake_${userId}`)
+      }
+
       const keysToRemove = [
         "waterHistory",
         "todayWaterIntake",
@@ -277,7 +321,7 @@ export function useWaterHistory(period: number = 7) {
   // FIX #4 — Accept goalOverride so the dashboard's dailyGoal prop is used
   // ─────────────────────────────────────────────────────────────────────────
   const getDailyStats = (days = 30, goalOverride?: number): DailyStats[] => {
-    const dailyGoal = goalOverride ?? 3000
+    const finalDailyGoal = goalOverride ?? dailyGoal ?? 2000
     const stats: { [date: string]: DailyStats } = {}
 
     for (let i = 0; i < days; i++) {
@@ -289,7 +333,7 @@ export function useWaterHistory(period: number = 7) {
         totalIntake: 0,
         goalReached: false,
         intakeCount: 0,
-        goal: dailyGoal,
+        goal: finalDailyGoal,
       }
     }
 
@@ -301,7 +345,7 @@ export function useWaterHistory(period: number = 7) {
         stats[dateKey].totalIntake += entry.amount
         stats[dateKey].intakeCount += 1
         stats[dateKey].goalReached =
-          stats[dateKey].totalIntake >= dailyGoal
+          stats[dateKey].totalIntake >= finalDailyGoal
       }
     })
 
@@ -372,5 +416,6 @@ export function useWaterHistory(period: number = 7) {
     getWeeklyStats,
     getCurrentStreak,
     resetAllData,
+    isLoading: weeklyServerData === undefined || todayServerIntakes === undefined,
   }
 }

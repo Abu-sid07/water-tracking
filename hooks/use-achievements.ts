@@ -40,6 +40,7 @@ export function useAchievements() {
     level: 1,
   })
   const [newlyUnlocked, setNewlyUnlocked] = useState<Achievement[]>([])
+  const [userId, setUserId] = useState<string | null>(null)
 
   // Initialize achievements
   useEffect(() => {
@@ -222,17 +223,30 @@ export function useAchievements() {
     ]
 
     // Load saved achievements and stats
-    const savedAchievements = localStorage.getItem("achievements")
-    const savedStats = localStorage.getItem("userStats")
+    try {
+      const currentUser = localStorage.getItem("currentUser")
+      if (currentUser) {
+        const parsed = JSON.parse(currentUser) as any
+        if (parsed.id) {
+          setUserId(parsed.id)
+          const savedAchievements = localStorage.getItem(`achievements_${parsed.id}`)
+          const savedStats = localStorage.getItem(`userStats_${parsed.id}`)
 
-    if (savedAchievements) {
-      setAchievements(JSON.parse(savedAchievements))
-    } else {
+          if (savedAchievements) {
+            setAchievements(JSON.parse(savedAchievements))
+          } else {
+            setAchievements(initialAchievements)
+          }
+
+          if (savedStats) {
+            setUserStats(JSON.parse(savedStats))
+          }
+        }
+      } else {
+        setAchievements(initialAchievements)
+      }
+    } catch (e) {
       setAchievements(initialAchievements)
-    }
-
-    if (savedStats) {
-      setUserStats(JSON.parse(savedStats))
     }
   }, [])
 
@@ -281,14 +295,16 @@ export function useAchievements() {
 
   // Save to localStorage when achievements or stats change
   useEffect(() => {
-    if (achievements.length > 0) {
-      localStorage.setItem("achievements", JSON.stringify(achievements))
+    if (userId && achievements.length > 0) {
+      localStorage.setItem(`achievements_${userId}`, JSON.stringify(achievements))
     }
-  }, [achievements])
+  }, [achievements, userId])
 
   useEffect(() => {
-    localStorage.setItem("userStats", JSON.stringify(userStats))
-  }, [userStats])
+    if (userId) {
+      localStorage.setItem(`userStats_${userId}`, JSON.stringify(userStats))
+    }
+  }, [userStats, userId])
 
   const updateProgress = useCallback(
     (waterIntake: number, dailyGoal: number, streak: number) => {

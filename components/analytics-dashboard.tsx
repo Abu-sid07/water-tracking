@@ -1,5 +1,6 @@
 "use client"
 
+
 import { useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -32,6 +33,7 @@ import {
   ArrowDown,
   Save,
   CalendarDays,
+  Loader2,
 } from "lucide-react"
 import { useWaterHistory } from "@/hooks/use-water-history"
 import { useMutation } from "convex/react"
@@ -53,7 +55,7 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
   // ─────────────────────────────────────────────────────────────────────────
   // FIX #3 — Pass selectedPeriod to hook so server fetches correct range
   // ─────────────────────────────────────────────────────────────────────────
-  const { getDailyStats, getWeeklyStats, getCurrentStreak, history } =
+  const { getDailyStats, getWeeklyStats, getCurrentStreak, history, isLoading } =
     useWaterHistory(Number.parseInt(selectedPeriod))
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -146,6 +148,17 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
     [weeklyStats, dailyGoal]
   )
 
+  // ── Loading Guard ───────────────────────────────────────────────────────
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 space-y-4">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-muted-foreground animate-pulse">Loading your analytics data...</p>
+      </div>
+    )
+  }
+
+
   // ─────────────────────────────────────────────────────────────────────────
   // FIX #1 — useMutation result used here (no hook inside function body)
   // ─────────────────────────────────────────────────────────────────────────
@@ -197,28 +210,33 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
 
       {/* Analytics Controls */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-foreground">
-            <CalendarDays className="h-5 w-5" />
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg flex items-center gap-2 text-foreground font-semibold">
+            <CalendarDays className="h-5 w-5 text-primary" />
             Analytics Settings
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="start-date" className="text-foreground">
+        <CardContent>
+          <div className="flex flex-col sm:flex-row items-end gap-4">
+            <div className="space-y-1.5 flex-1 w-full sm:w-auto">
+              <Label htmlFor="start-date" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 Start Date
               </Label>
-              <Input
-                id="start-date"
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="text-foreground"
-              />
+              <div className="relative">
+                <Input
+                  id="start-date"
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="text-sm bg-background border-muted-foreground/20 focus:border-primary h-9 transition-colors"
+                />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label className="text-foreground">Period</Label>
+            
+            <div className="space-y-1.5 flex-1 w-full sm:w-auto">
+              <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Time Period
+              </Label>
               <Select
                 value={selectedPeriod}
                 onValueChange={(value: "7" | "30" | "90") => {
@@ -228,29 +246,32 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
                   setStartDate(date.toISOString().split("T")[0])
                 }}
               >
-                <SelectTrigger className="text-foreground">
+                <SelectTrigger className="text-sm bg-background border-muted-foreground/20 h-9 transition-colors">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="7">7 days</SelectItem>
-                  <SelectItem value="30">30 days</SelectItem>
-                  <SelectItem value="90">90 days</SelectItem>
+                  <SelectItem value="7">Last 7 days</SelectItem>
+                  <SelectItem value="30">Last 30 days</SelectItem>
+                  <SelectItem value="90">Last 90 days</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label className="text-foreground">Actions</Label>
-              <Button onClick={handleSaveAnalytics} className="w-full" size="sm">
-                <Save className="h-4 w-4 mr-2" />
-                Save Data
-              </Button>
-            </div>
+
+            <Button 
+              onClick={handleSaveAnalytics} 
+              variant="outline"
+              size="sm"
+              className="h-9 w-full sm:w-auto px-4 border-primary/20 hover:bg-primary/5 text-primary transition-all"
+            >
+              <Save className="h-4 w-4 mr-2" />
+              Save Report
+            </Button>
           </div>
         </CardContent>
       </Card>
 
       {/* Key Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
@@ -275,7 +296,7 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
                         : "text-red-500"
                     }
                   >
-                    {Math.round((averageDailyIntake / dailyGoal) * 100)}% of goal
+                    {Math.round((averageDailyIntake / dailyGoal) * 100)}%
                   </span>
                 </div>
               </div>
@@ -370,7 +391,7 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-80">
+              <div className="h-48 sm:h-64 md:h-80">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -402,7 +423,7 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-80">
+              <div className="h-48 sm:h-64 md:h-80">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={weeklyChartData}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -446,7 +467,7 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-80">
+              <div className="h-48 sm:h-64 md:h-80">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -490,7 +511,9 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
               ? history.slice(0, 10)
               : (() => {
                   try {
-                    const raw = localStorage.getItem("recentActivity")
+                    const currentUser = localStorage.getItem("currentUser")
+                    const userId = currentUser ? JSON.parse(currentUser).id : null
+                    const raw = userId ? localStorage.getItem(`recentActivity_${userId}`) : null
                     return raw ? JSON.parse(raw) : []
                   } catch (e) {
                     return []
