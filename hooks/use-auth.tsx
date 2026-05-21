@@ -22,14 +22,54 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+export function AuthProvider({ children, initialUser = null }: { children: ReactNode; initialUser?: User | null }) {
+  const [user, setUser] = useState<User | null>(initialUser)
+  const [isLoading, setIsLoading] = useState(!initialUser)
   // Convex mutations/queries
   const createConvexUser = useMutation(api.users.createUser)
   const authenticateUser = useMutation(api.users.authenticate)
   // Check for existing session on mount
   useEffect(() => {
+    const syncUser = async (u: User) => {
+      try {
+        // Try to sync with Convex
+        const convexUser = await createConvexUser({ 
+          name: u.name, 
+          email: u.email 
+        })
+        if (convexUser) {
+          const updatedUser = { ...u, convexId: convexUser }
+          setUser(updatedUser)
+          localStorage.setItem("currentUser", JSON.stringify(updatedUser))
+        }
+      } catch (e) {
+        console.warn("Failed to sync WorkOS user with Convex:", e)
+      }
+    }
+
+    if (initialUser) {
+      // Check if we already have this user in localStorage with a convexId
+      const savedUser = localStorage.getItem("currentUser")
+      if (savedUser) {
+        try {
+          const parsed = JSON.parse(savedUser)
+          if (parsed.email === initialUser.email && parsed.convexId) {
+            setUser(parsed)
+            setIsLoading(false)
+            return
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      setUser(initialUser)
+      setIsLoading(false)
+      // Sync in background
+      syncUser(initialUser)
+      return
+    }
+
     const savedUser = localStorage.getItem("currentUser")
     if (savedUser) {
       try {
@@ -40,7 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     setIsLoading(false)
-  }, [])
+  }, [initialUser, createConvexUser])
 
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true)
@@ -170,6 +210,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     setUser(null)
     localStorage.removeItem("currentUser")
+    // Redirect to WorkOS logout
+    window.location.href = "/api/auth/logout"
   }
 
   const value: AuthContextType = {
@@ -184,10 +226,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
-export function useAuth() {
+export function useAppAuth() {
   const context = useContext(AuthContext)
   if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider")
+    throw new Error("useAppAuth must be used within an AuthProvider")
   }
   return context
 }

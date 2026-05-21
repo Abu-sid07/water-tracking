@@ -6,6 +6,7 @@ import "./globals.css"
 import { ConvexClientProvider } from "@/lib/convex"
 import { ThemeProvider } from "@/components/theme-provider"
 import { AuthProvider } from "@/hooks/use-auth"
+import { withAuth } from '@workos-inc/authkit-nextjs'
 
 export const metadata: Metadata = {
   title: "Hydration Tracker",
@@ -13,18 +14,23 @@ export const metadata: Metadata = {
   generator: "v0.app",
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  const { user: workosUser } = await withAuth()
+  
+  const initialUser = workosUser ? {
+    id: workosUser.id,
+    name: `${workosUser.firstName || ''} ${workosUser.lastName || ''}`.trim() || 'User',
+    email: workosUser.email,
+    createdAt: Date.now(),
+  } : null
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        {
-          // Render font CSS via innerHTML and suppress hydration warning to avoid
-          // server/client text-content encoding differences (quotes vs entities).
-        }
         <style
           suppressHydrationWarning
           dangerouslySetInnerHTML={{
@@ -33,9 +39,16 @@ export default function RootLayout({
         />
       </head>
       <body>
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
           <ConvexClientProvider>
-            <AuthProvider>{children}</AuthProvider>
+            <AuthProvider initialUser={initialUser}>
+              {children}
+            </AuthProvider>
           </ConvexClientProvider>
         </ThemeProvider>
       </body>

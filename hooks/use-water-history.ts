@@ -416,6 +416,6 @@ export function useWaterHistory(period: number = 7) {
     getWeeklyStats,
     getCurrentStreak,
     resetAllData,
-    isLoading: weeklyServerData === undefined || todayServerIntakes === undefined,
+    isLoading: convexId !== null && (weeklyServerData === undefined || todayServerIntakes === undefined),
   }
 }

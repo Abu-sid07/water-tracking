@@ -14,7 +14,7 @@ import { AchievementNotification } from "@/components/achievement-notification"
 import { ReminderNotification } from "@/components/reminder-notification"
 import { useWaterHistory } from "@/hooks/use-water-history"
 import { useAchievements } from "@/hooks/use-achievements"
-import { useAuth } from "@/hooks/use-auth"
+import { useAppAuth } from "@/hooks/use-auth"
 import { useReminderTimer } from "@/hooks/use-reminder-timer"
 import { useNotifications } from "@/hooks/use-notifications"
 import { useReminder } from "@/hooks/use-reminder"
@@ -30,7 +30,7 @@ interface UserProfile {
 }
 
 export default function Page() {
-	const { user, logout, isAuthenticated } = useAuth()
+	const { user, logout, isAuthenticated } = useAppAuth()
 	const [showAuthModal, setShowAuthModal] = useState(false)
 	const [authMode, setAuthMode] = useState<'login' | 'signup'>('login')
 

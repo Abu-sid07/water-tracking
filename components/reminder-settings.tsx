@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Bell, BellOff, Clock, Volume2, AlarmClock, Plus, X, BarChart, Settings } from "lucide-react"
 import { useNotifications } from "@/hooks/use-notifications"
 import { useCustomSound } from "@/hooks/use-custom-sound"
+import { SoundUpload } from "@/components/sound-upload"
 import { useEffect } from "react"
 interface AlarmTime {
   id: string
@@ -52,7 +53,7 @@ export function ReminderSettings({ isEnabled, interval, onToggle, onIntervalChan
     setTimeout(() => setTestingSound(false), 700)
   }
 
-  const { customSoundUrl, playNotificationSound } = useCustomSound()
+  const { customSoundUrl, playNotificationSound, updateCustomSound } = useCustomSound()
   const { showNotification } = useNotifications()
 
   // Scheduler: check every 30 seconds for alarms matching current time (HH:MM)
@@ -338,9 +339,14 @@ export function ReminderSettings({ isEnabled, interval, onToggle, onIntervalChan
                 </div>
               </div>
 
+              {/* Custom Sound Upload */}
+              <div className="pt-4 border-t">
+                <SoundUpload currentSound={customSoundUrl} onSoundChange={updateCustomSound} />
+              </div>
+
               {/* Test Sound */}
-              <div className="space-y-2">
-                <Label>Notification Sound</Label>
+              <div className="space-y-2 pt-2">
+                <Label>Test Current Sound</Label>
                 <Button
                   variant="outline"
                   onClick={testNotificationSound}
@@ -348,7 +354,7 @@ export function ReminderSettings({ isEnabled, interval, onToggle, onIntervalChan
                   className="w-full bg-transparent"
                 >
                   <Volume2 className="h-4 w-4 mr-2" />
-                  {testingSound ? "Playing..." : "Test Sound"}
+                  {testingSound ? "Playing..." : "Play Preview"}
                 </Button>
               </div>
             </CardContent>

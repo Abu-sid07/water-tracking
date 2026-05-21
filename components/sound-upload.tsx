@@ -19,6 +19,7 @@ interface SoundUploadProps {
 export function SoundUpload({ onSoundChange, currentSound }: SoundUploadProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null)
+  const [pendingSound, setPendingSound] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const { toast } = useToast()
@@ -28,50 +29,99 @@ export function SoundUpload({ onSoundChange, currentSound }: SoundUploadProps) {
       const file = event.target.files?.[0]
       if (!file) return
 
-      // Validate file type
-      if (!file.type.startsWith("audio/")) {
+      const allowedTypes = ["audio/mpeg", "audio/wav", "audio/ogg", "audio/x-m4a", "audio/mp4"]
+      const allowedExtensions = [".mp3", ".wav", ".ogg", ".m4a"]
+      const fileExtension = file.name.toLowerCase().slice(file.name.lastIndexOf("."))
+
+      // Validate file type and extension
+      if (!allowedTypes.includes(file.type) && !allowedExtensions.includes(fileExtension)) {
         toast({
-          title: "Invalid file type",
-          description: "Please upload an audio file (MP3, WAV, OGG, etc.)",
+          title: "Unsupported file format",
+          description: "This file is unsupported. Please upload a different file.",
           variant: "destructive",
         })
+        if (fileInputRef.current) fileInputRef.current.value = ""
         return
       }
 
-      // Validate file size (max 100KB)
-      if (file.size > 100 * 1024) {
+      // Validate file size (max 500KB)
+      if (file.size > 500 * 1024) {
         toast({
           title: "File too large",
-          description: "Please upload an audio file smaller than 100KB",
+          description: "Maximum file size is 500KB. Your file is " + Math.round(file.size / 1024) + "KB.",
           variant: "destructive",
         })
+        if (fileInputRef.current) fileInputRef.current.value = ""
         return
       }
 
-      // Read file as DataURL and pass it back
-      const reader = new FileReader()
-      reader.onload = () => {
-        const result = reader.result as string
-        // Ensure not too large for localStorage (approx check)
-        const approxSize = (result.length * 3) / 4
-        if (approxSize > 100 * 1024) {
-          toast({ title: "File too large for storage", description: "Uploaded audio exceeds 100KB when encoded.", variant: "destructive" })
+      // Validate duration (max 30 seconds)
+      const audioUrl = URL.createObjectURL(file)
+      const tempAudio = new Audio(audioUrl)
+      
+      tempAudio.addEventListener("loadedmetadata", () => {
+        const duration = tempAudio.duration
+        URL.revokeObjectURL(audioUrl)
+
+        if (duration > 30) {
+          toast({
+            title: "File too long",
+            description: `The audio duration is ${Math.round(duration)}s. Maximum allowed is 30s.`,
+            variant: "destructive",
+          })
+          if (fileInputRef.current) fileInputRef.current.value = ""
           return
         }
-        setUploadedFileName(file.name)
-        onSoundChange(result)
-        toast({ title: "Sound uploaded successfully", description: `${file.name} is now your notification sound` })
-      }
-      reader.onerror = () => {
-        toast({ title: "Error", description: "Failed to read file", variant: "destructive" })
-      }
-      reader.readAsDataURL(file)
+
+        // Proceed to read file if duration is valid
+        const reader = new FileReader()
+        reader.onload = () => {
+          const result = reader.result as string
+          // Ensure not too large for localStorage (approx check)
+          const approxSize = (result.length * 3) / 4
+          if (approxSize > 512 * 1024) {
+            toast({ 
+              title: "Storage limit exceeded", 
+              description: "The encoded audio file is too large for browser storage.", 
+              variant: "destructive" 
+            })
+            if (fileInputRef.current) fileInputRef.current.value = ""
+            return
+          }
+          setUploadedFileName(file.name)
+          setPendingSound(result)
+          toast({ title: "File selected", description: `Click 'Upload' to set ${file.name} as your notification sound` })
+        }
+        reader.onerror = () => {
+          toast({ title: "Error", description: "Failed to read file", variant: "destructive" })
+        }
+        reader.readAsDataURL(file)
+      })
+
+      tempAudio.addEventListener("error", () => {
+        URL.revokeObjectURL(audioUrl)
+        toast({
+          title: "Invalid audio file",
+          description: "Could not read audio metadata. Please try a different file.",
+          variant: "destructive",
+        })
+        if (fileInputRef.current) fileInputRef.current.value = ""
+      })
     },
-    [onSoundChange, toast],
+    [toast],
   )
 
+  const handleApplySound = useCallback(() => {
+    if (pendingSound) {
+      onSoundChange(pendingSound)
+      setPendingSound(null)
+      toast({ title: "Sound updated", description: "Your notification sound has been updated" })
+    }
+  }, [pendingSound, onSoundChange, toast])
+
   const playPreview = useCallback(() => {
-    if (!currentSound) return
+    const soundToPlay = pendingSound || currentSound
+    if (!soundToPlay) return
 
     if (audioRef.current) {
       if (isPlaying) {
@@ -79,7 +129,7 @@ export function SoundUpload({ onSoundChange, currentSound }: SoundUploadProps) {
         audioRef.current.currentTime = 0
         setIsPlaying(false)
       } else {
-        audioRef.current.src = currentSound
+        audioRef.current.src = soundToPlay
         audioRef.current.play().catch(() => {
           setIsPlaying(false)
           toast({ title: "Play failed", description: "Unable to play selected audio", variant: "destructive" })
@@ -87,13 +137,11 @@ export function SoundUpload({ onSoundChange, currentSound }: SoundUploadProps) {
         setIsPlaying(true)
       }
     }
-  }, [currentSound, isPlaying])
+  }, [currentSound, pendingSound, isPlaying, toast])
 
   const resetToDefault = useCallback(() => {
-    if (currentSound && currentSound.startsWith("blob:")) {
-      URL.revokeObjectURL(currentSound)
-    }
     setUploadedFileName(null)
+    setPendingSound(null)
     onSoundChange(null)
     setIsPlaying(false)
 
@@ -101,19 +149,17 @@ export function SoundUpload({ onSoundChange, currentSound }: SoundUploadProps) {
       title: "Reset to default",
       description: "Using default notification sound",
     })
-  }, [currentSound, onSoundChange, toast])
+  }, [onSoundChange, toast])
 
   const removeSound = useCallback(() => {
-    if (currentSound && currentSound.startsWith("blob:")) {
-      URL.revokeObjectURL(currentSound)
-    }
     setUploadedFileName(null)
+    setPendingSound(null)
     onSoundChange(null)
     setIsPlaying(false)
     if (fileInputRef.current) {
       fileInputRef.current.value = ""
     }
-  }, [currentSound, onSoundChange])
+  }, [onSoundChange])
 
   return (
     <Card>
@@ -125,12 +171,12 @@ export function SoundUpload({ onSoundChange, currentSound }: SoundUploadProps) {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="sound-upload">Upload Custom Sound</Label>
+          <Label htmlFor="sound-upload">Choose Custom Sound</Label>
           <div className="flex gap-2">
             <Input
               id="sound-upload"
               type="file"
-              accept="audio/*"
+              accept=".mp3,audio/mpeg,.wav,audio/wav,.ogg,audio/ogg,.m4a,audio/x-m4a,audio/mp4"
               onChange={handleFileUpload}
               ref={fileInputRef}
               className="flex-1"
@@ -139,18 +185,24 @@ export function SoundUpload({ onSoundChange, currentSound }: SoundUploadProps) {
               <Upload className="h-4 w-4" />
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">Supported formats: MP3, WAV, OGG, M4A (max 100KB)</p>
+          <p className="text-xs text-muted-foreground">Supported formats: MP3, WAV, OGG, M4A (max 500KB, max 30s)</p>
         </div>
 
-        {currentSound && (
+        {(currentSound || pendingSound) && (
           <div className="space-y-3">
             <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
               <div className="flex items-center gap-2">
                 <Volume2 className="h-4 w-4 text-primary" />
-                <span className="text-sm font-medium">{uploadedFileName || "Custom Sound"}</span>
-                <Badge variant="secondary" className="text-xs">
-                  Active
-                </Badge>
+                <span className="text-sm font-medium">{uploadedFileName || (pendingSound ? "New Sound" : "Current Sound")}</span>
+                {pendingSound ? (
+                  <Badge variant="outline" className="text-xs text-orange-500 border-orange-500">
+                    Pending
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="text-xs">
+                    Active
+                  </Badge>
+                )}
               </div>
               <div className="flex gap-1">
                 <Button variant="ghost" size="sm" onClick={playPreview} className="h-8 w-8 p-0">
@@ -160,7 +212,7 @@ export function SoundUpload({ onSoundChange, currentSound }: SoundUploadProps) {
                   variant="ghost"
                   size="sm"
                   onClick={removeSound}
-                  className="h-8 w-8 p-0 text-destructive hover:text-destructive dark:text-destructive-foreground dark:hover:text-destructive-foreground"
+                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                 >
                   <Trash2 className="h-3 w-3" />
                 </Button>
@@ -169,7 +221,7 @@ export function SoundUpload({ onSoundChange, currentSound }: SoundUploadProps) {
           </div>
         )}
 
-        {!currentSound && (
+        {!currentSound && !pendingSound && (
           <div className="text-center p-4 border-2 border-dashed border-muted-foreground/25 rounded-lg">
             <Volume2 className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">Using default notification sound</p>
@@ -177,29 +229,13 @@ export function SoundUpload({ onSoundChange, currentSound }: SoundUploadProps) {
         )}
 
         <div className="flex gap-2">
-          <Button
-            variant="secondary"
-            onClick={() => {
-              if (currentSound) {
-                try {
-                  // Let parent persist via onSoundChange
-                  onSoundChange(currentSound)
-                  // also persist here for immediate effect (parent hook will sync)
-                  try { localStorage.setItem("water-reminder-custom-sound", currentSound) } catch {}
-                  toast({ title: "Saved", description: "Notification sound saved" })
-                } catch (e) {
-                  console.warn("Failed to save sound:", e)
-                  toast({ title: "Error", description: "Could not save sound", variant: "destructive" })
-                }
-              } else {
-                toast({ title: "No sound", description: "Please upload a sound first", variant: "destructive" })
-              }
-            }}
-            className="flex-1"
-          >
-            Save
-          </Button>
-          <Button variant="outline" onClick={resetToDefault} className="w-36 bg-transparent" disabled={!currentSound}>
+          {pendingSound && (
+            <Button onClick={handleApplySound} className="flex-1">
+              <Upload className="h-4 w-4 mr-2" />
+              Upload & Set Sound
+            </Button>
+          )}
+          <Button variant="outline" onClick={resetToDefault} className={pendingSound ? "w-1/3 bg-transparent" : "flex-1 bg-transparent"} disabled={!currentSound && !pendingSound}>
             <RotateCcw className="h-4 w-4 mr-2" />
             Reset
           </Button>

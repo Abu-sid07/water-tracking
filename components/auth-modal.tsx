@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2, Mail, Lock, User, X } from "lucide-react"
-import { useAuth } from "@/hooks/use-auth"
+import { useAppAuth } from "@/hooks/use-auth"
+import { WorkOSLoginButton } from "@/components/workos-login-button"
 
 interface AuthModalProps {
   isOpen: boolean
@@ -26,7 +27,7 @@ export function AuthModal({ isOpen, onClose, defaultMode = "login" }: AuthModalP
     confirmPassword: "",
   })
   const [error, setError] = useState("")
-  const { login, signup, isLoading } = useAuth()
+  const { login, signup, isLoading } = useAppAuth()
 
   if (!isOpen) return null
 
@@ -179,6 +180,16 @@ export function AuthModal({ isOpen, onClose, defaultMode = "login" }: AuthModalP
               )}
             </Button>
           </form>
+
+          <div className="relative my-4">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t" />
+            </div>
+            <div className="relative flex justify-center text-xs text-muted-foreground">
+              <span className="bg-background px-2">or</span>
+            </div>
+          </div>
+          <WorkOSLoginButton />
 
           <div className="mt-4 text-center">
             <p className="text-sm text-muted-foreground">
