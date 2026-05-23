@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useMutation, useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { Id } from "@/convex/_generated/dataModel"
@@ -35,60 +35,48 @@ export interface WeeklyStats {
 export function useWaterHistory(period: number = 7) {
   const [history, setHistory] = useState<WaterIntakeEntry[]>([])
   const [todayWaterIntake, setTodayWaterIntake] = useState(0)
+  const [userEmail, setUserEmail] = useState<string | null>(null)
   const [convexId, setConvexId] = useState<Id<"users"> | null>(null)
-  const [userId, setUserId] = useState<string | null>(null)
-
-  // Get daily goal based on weight
+  const [isAdding, setIsAdding] = useState(false)
+  const [canUndo, setCanUndo] = useState(false)
+  const undoTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const [dailyGoal, setDailyGoal] = useState(2000)
+  const [profile, setProfile] = useState<any>({ weight: 70 })
+  const [isInitialized, setIsInitialized] = useState(false)
 
-  // ── Read user info from localStorage on mount ─────────────────────────────
+  // ── 1. Load User Info on Mount ───────────────────────────────────────────
   useEffect(() => {
-    try {
+    const checkUser = () => {
       const currentUser = localStorage.getItem("currentUser")
       if (currentUser) {
-        const parsed = JSON.parse(currentUser) as any
-        if (parsed.convexId) {
-          setConvexId(parsed.convexId as Id<"users">)
+        try {
+          const parsed = JSON.parse(currentUser)
+          if (parsed.email !== userEmail) {
+            setUserEmail(parsed.email)
+          }
+          if (parsed.convexId && parsed.convexId !== convexId) {
+            setConvexId(parsed.convexId)
+          }
+        } catch (e) {
+          console.error("Failed to parse currentUser", e)
         }
-        if (parsed.id) {
-          setUserId(parsed.id)
-          
-          // Load history from user-scoped storage to avoid flicker
-          const savedHistory = localStorage.getItem(`waterHistory_${parsed.id}`)
-          if (savedHistory) {
-            setHistory(JSON.parse(savedHistory))
-          }
-
-          const savedToday = localStorage.getItem(`todayWaterIntake_${parsed.id}`)
-          if (savedToday) {
-            const parsedToday = JSON.parse(savedToday)
-            const today = new Date().toISOString().split("T")[0]
-            if (parsedToday.date === today) {
-              setTodayWaterIntake(parsedToday.amount)
-            }
-          }
-          
-          // Load profile to get weight for goal calculation
-          const profileRaw = localStorage.getItem(`userProfile_${parsed.id}`)
-          if (profileRaw) {
-            const profile = JSON.parse(profileRaw)
-            if (profile.weight) {
-              setDailyGoal(calculateDailyGoal(profile))
-            }
-          }
-        }
+      } else {
+        setUserEmail(null)
+        setConvexId(null)
+        setHistory([])
+        setTodayWaterIntake(0)
       }
-    } catch (e) {
-      // ignore
     }
-  }, [])
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // FIX #2 — useQuery always called unconditionally; "skip" handles no-user
-  // ─────────────────────────────────────────────────────────────────────────
+    checkUser()
+    window.addEventListener("storage", checkUser)
+    return () => window.removeEventListener("storage", checkUser)
+  }, [userEmail, convexId])
+
+  // ── 2. Convex Queries ────────────────────────────────────────────────────
   const weeklyServerData = useQuery(
     api.waterIntakes.getWeeklyIntakes,
-    convexId ? { userId: convexId, days: period } : "skip"
+    convexId ? { userId: convexId, days: 90 } : "skip"
   )
 
   const todayServerIntakes = useQuery(
@@ -96,212 +84,157 @@ export function useWaterHistory(period: number = 7) {
     convexId ? { userId: convexId } : "skip"
   )
 
-  // Mutations — always at top level (no conditional calls)
-  const addWaterMutation    = useMutation(api.waterIntakes.addWaterIntake)
+  const addWaterMutation = useMutation(api.waterIntakes.addWaterIntake)
   const deleteIntakeMutation = useMutation(api.waterIntakes.deleteIntake)
 
-
-  // ── Merge weekly server data into local history ───────────────────────────
+  // ── 3. Sync Convex Data to Local State ───────────────────────────────────
   useEffect(() => {
-    try {
-      const serverArray = Array.isArray(weeklyServerData) ? weeklyServerData : []
-      if (serverArray.length > 0) {
-        const mapped = serverArray.map((d: any) => ({
-          id: d._id || `${d.timestamp}`,
-          amount: d.amount,
-          timestamp: d.timestamp,
-          date: d.date,
-        }))
-
-        setHistory((prev) => {
-          const existingTs = new Set(prev.map((p) => p.timestamp))
-          const merged = [
-            ...mapped.filter((m) => !existingTs.has(m.timestamp)),
-            ...prev,
-          ]
-          const sorted = merged.sort((a, b) => b.timestamp - a.timestamp)
-          
-          // Save to user-scoped localStorage
-          if (userId) {
-            localStorage.setItem(`waterHistory_${userId}`, JSON.stringify(sorted))
-          }
-          
-          return sorted
-        })
-      }
-    } catch (e) {
-      // ignore
-    }
-  }, [weeklyServerData, userId])
-
-  // ── Sync today's server intakes & compute authoritative total ────────────
-  useEffect(() => {
-    try {
-      const serverToday = Array.isArray(todayServerIntakes) ? todayServerIntakes : []
-      const mapped = serverToday.map((d: any) => ({
-        id: d._id || `${d.timestamp}`,
+    if (weeklyServerData) {
+      const mapped = weeklyServerData.map((d: any) => ({
+        id: d._id,
         amount: d.amount,
         timestamp: d.timestamp,
         date: d.date,
       }))
-
-      const today = new Date().toISOString().split("T")[0]
-      const serverTs = new Set(mapped.map((m) => m.timestamp))
-
-      setHistory((prev) => {
-        const pendingLocal = prev.filter(
-          (p) => p.date.startsWith(today) && !serverTs.has(p.timestamp)
-        )
-        const preservedOld = prev.filter((p) => !p.date.startsWith(today))
-        const merged = [...mapped, ...pendingLocal, ...preservedOld].sort(
-          (a, b) => b.timestamp - a.timestamp
-        )
-
-        const serverTotal = mapped
-          .filter((m) => m.date.startsWith(today))
-          .reduce((s, e) => s + e.amount, 0)
-        const pendingTotal = pendingLocal.reduce((s, e) => s + e.amount, 0)
-        const todayTotal = serverTotal + pendingTotal
-
-        // Save to user-scoped localStorage
-        if (userId) {
-          localStorage.setItem(
-            `todayWaterIntake_${userId}`,
-            JSON.stringify({ date: today, amount: todayTotal })
-          )
-          localStorage.setItem(`waterHistory_${userId}`, JSON.stringify(merged))
-        }
-
-        setTodayWaterIntake(todayTotal)
-        return merged
-      })
-    } catch (e) {
-      // ignore
+      setHistory(mapped.sort((a, b) => b.timestamp - a.timestamp))
+      setIsInitialized(true)
+    } else if (convexId === null && userEmail !== null) {
+      // If we're logged in but don't have a convexId yet, we can't fetch from server
+      // Just mark as initialized so we don't stay stuck on loading
+      setIsInitialized(true)
     }
-  }, [todayServerIntakes, userId])
+  }, [weeklyServerData, convexId, userEmail])
 
-  // ── Add water intake ──────────────────────────────────────────────────────
-  const addWaterIntake = (amount: number) => {
-    const now = new Date()
-    const isoDate = now.toISOString()
-    const entry: WaterIntakeEntry = {
-      id: `local_${now.getTime()}`,
-      amount,
-      timestamp: now.getTime(),
-      date: isoDate,
+  useEffect(() => {
+    if (todayServerIntakes) {
+      const total = todayServerIntakes.reduce((sum, intake) => sum + intake.amount, 0)
+      setTodayWaterIntake(total)
     }
+  }, [todayServerIntakes])
 
-    try {
-      const currentUser = localStorage.getItem("currentUser")
-      if (currentUser) {
-        const parsed = JSON.parse(currentUser) as any
-        if (parsed.convexId) {
-          addWaterMutation({ userId: parsed.convexId as Id<"users">, amount })
-            .then((serverId: any) => {
-              if (serverId) {
-                setHistory((prev) =>
-                  prev.map((e) =>
-                    e.id === entry.id ? { ...e, id: serverId } : e
-                  )
-                )
-              }
-            })
-            .catch((err: any) => {
-              console.warn("addWaterMutation failed:", err)
-            })
-        }
+  // Load Profile/Goal from localStorage (keep this local as it's user-specific setup)
+  useEffect(() => {
+    if (!userEmail) return
+    const storageKey = `water_data_${userEmail}`
+    const savedDataRaw = localStorage.getItem(storageKey)
+    if (savedDataRaw) {
+      try {
+        const savedData = JSON.parse(savedDataRaw)
+        if (savedData.dailyGoal) setDailyGoal(savedData.dailyGoal)
+        if (savedData.profile) setProfile(savedData.profile)
+      } catch (e) {
+        console.error("Failed to parse local user settings", e)
       }
-    } catch (e) {
-      console.warn("Failed to call convex addWaterIntake:", e)
     }
+  }, [userEmail])
 
-    setTodayWaterIntake((prev) => prev + amount)
-    setHistory((prev) => [entry, ...prev])
+  // ── 4. Helper to Save to Local (Optimistic/Cache) ────────────────────────
+  const saveToUserStorage = useCallback((updates: any) => {
+    if (!userEmail) return
+    const storageKey = `water_data_${userEmail}`
+    try {
+      const currentRaw = localStorage.getItem(storageKey)
+      const current = currentRaw ? JSON.parse(currentRaw) : { entries: [], dailyGoal: 2000, profile: { weight: 70 } }
+      const updated = { ...current, ...updates }
+      localStorage.setItem(storageKey, JSON.stringify(updated))
+    } catch (e) {
+      console.error("Error saving to user storage:", e)
+    }
+  }, [userEmail])
+
+  // ── 5. Add Water Intake ───────────────────────────────────────────────────
+  const addWaterIntake = async (amount: number) => {
+    if (amount < 1 || amount > 5000 || !userEmail) return
+
+    setIsAdding(true)
+    
+    try {
+      if (convexId) {
+        // Primary: Convex
+        await addWaterMutation({ userId: convexId, amount })
+      } else {
+        // Fallback: Local only if no convexId
+        const now = new Date()
+        const entry: WaterIntakeEntry = {
+          id: `local_${now.getTime()}`,
+          amount,
+          timestamp: now.getTime(),
+          date: now.toISOString(),
+        }
+        const updatedHistory = [entry, ...history]
+        setHistory(updatedHistory)
+        setTodayWaterIntake(prev => prev + amount)
+        saveToUserStorage({ entries: updatedHistory })
+      }
+
+      // Manage undo window
+      setCanUndo(true)
+      if (undoTimeoutRef.current) {
+        clearTimeout(undoTimeoutRef.current)
+      }
+      undoTimeoutRef.current = setTimeout(() => {
+        setCanUndo(false)
+        undoTimeoutRef.current = null
+      }, 30000)
+    } catch (e) {
+      console.error("Error adding water intake:", e)
+    } finally {
+      setIsAdding(false)
+    }
   }
 
-  // ── Undo last intake ──────────────────────────────────────────────────────
-  const undoLastIntake = () => {
-    setHistory((prev) => {
-      if (prev.length === 0) return prev
-      const [last, ...rest] = prev
-      const today = new Date().toISOString().split("T")[0]
-      if (last.date === today) {
-        setTodayWaterIntake((t) => Math.max(0, t - last.amount))
-      }
+  // ── 6. Undo Last Intake ───────────────────────────────────────────────────
+  const undoLastIntake = async () => {
+    if (!canUndo || history.length === 0 || !userEmail) return
 
-      try {
-        const currentUser = localStorage.getItem("currentUser")
-        if (currentUser) {
-          const parsed = JSON.parse(currentUser) as any
-          if (
-            parsed.convexId &&
-            !String(last.id).startsWith("local_")
-          ) {
-            deleteIntakeMutation({
-              intakeId: last.id as Id<"waterIntakes">,
-              userId: parsed.convexId as Id<"users">,
-            })
-          }
+    const lastEntry = history[0]
+    setCanUndo(false)
+    if (undoTimeoutRef.current) {
+      clearTimeout(undoTimeoutRef.current)
+      undoTimeoutRef.current = null
+    }
+    
+    try {
+      if (convexId && !String(lastEntry.id).startsWith("local_")) {
+        await deleteIntakeMutation({ 
+          intakeId: lastEntry.id as Id<"waterIntakes">, 
+          userId: convexId 
+        })
+      } else {
+        // Local only fallback
+        const updatedHistory = history.slice(1)
+        setHistory(updatedHistory)
+        const today = new Date().toISOString().split("T")[0]
+        if (lastEntry.date.startsWith(today)) {
+          setTodayWaterIntake((t) => Math.max(0, t - lastEntry.amount))
         }
-      } catch (e) {
-        // ignore
+        saveToUserStorage({ entries: updatedHistory })
       }
-
-      return rest
-    })
+    } catch (e) {
+      console.error("Error undoing intake:", e)
+    }
   }
 
   const resetTodayIntake = () => {
-    setTodayWaterIntake(0)
+    // This would need a mutation to delete all of today's entries on Convex
+    // For now, let's just reset local if no convexId
+    if (!convexId) {
+      setTodayWaterIntake(0)
+      if (userEmail) {
+        const today = new Date().toISOString().split("T")[0]
+        const updatedHistory = history.filter(e => !e.date.startsWith(today))
+        setHistory(updatedHistory)
+        saveToUserStorage({ entries: updatedHistory })
+      }
+    }
   }
 
   const resetAllData = () => {
-    try {
-      setHistory([])
-      setTodayWaterIntake(0)
-
-      if (userId) {
-        localStorage.removeItem(`waterHistory_${userId}`)
-        localStorage.removeItem(`todayWaterIntake_${userId}`)
-      }
-
-      const keysToRemove = [
-        "waterHistory",
-        "todayWaterIntake",
-        "achievements",
-        "userStats",
-        "analyticsEvents",
-        "recentActivity",
-        "water-reminder-custom-sound",
-      ]
-      keysToRemove.forEach((k) => {
-        try {
-          localStorage.removeItem(k)
-        } catch (e) {
-          // ignore
-        }
-      })
-
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i)
-        if (!key) continue
-        if (key.startsWith("userProfile_") || key === "currentUser" || key === "registeredUsers")
-          continue
-        if (
-          key.includes("water-") ||
-          key.includes("waterHistory") ||
-          key.includes("analytics")
-        ) {
-          try {
-            localStorage.removeItem(key)
-          } catch (e) {
-            // ignore
-          }
-        }
-      }
-    } catch (e) {
-      console.warn("Failed to reset all data:", e)
-    }
+    if (!userEmail) return
+    setHistory([])
+    setTodayWaterIntake(0)
+    localStorage.removeItem(`water_data_${userEmail}`)
+    // Resetting Convex would require another mutation
   }
 
   const getTodayStats = () => {
@@ -363,7 +296,13 @@ export function useWaterHistory(period: number = 7) {
       const weekDays = dailyStats.slice(weekStart, weekStart + 7)
       const totalIntake = weekDays.reduce((sum, day) => sum + day.totalIntake, 0)
       const daysGoalReached = weekDays.filter((day) => day.goalReached).length
-      const averageIntake = Math.round(totalIntake / weekDays.length)
+      
+      // Fix: Divide by count of active days instead of fixed 7
+      const activeDaysCount = weekDays.filter(day => day.totalIntake > 0).length
+      const averageIntake = activeDaysCount > 0 
+        ? Math.round(totalIntake / activeDaysCount) 
+        : 0
+
       weeklyStats.push({
         week: `Week ${week + 1}`,
         averageIntake,
@@ -381,7 +320,6 @@ export function useWaterHistory(period: number = 7) {
     if (dailyStats.length === 0) return 0
 
     let streak = 0
-    const today = new Date().toISOString().split("T")[0]
     
     // Check if we should start counting from today or yesterday
     // If today's goal is reached, start from today.
@@ -416,6 +354,8 @@ export function useWaterHistory(period: number = 7) {
     getWeeklyStats,
     getCurrentStreak,
     resetAllData,
-    isLoading: convexId !== null && (weeklyServerData === undefined || todayServerIntakes === undefined),
+    isAdding,
+    canUndo,
+    isLoading: userEmail !== null && !isInitialized,
   }
 }

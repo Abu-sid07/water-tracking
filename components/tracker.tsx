@@ -5,7 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
-import { Droplets, Plus, Target, Clock, Trophy } from "lucide-react"
+import { Droplets, Plus, Target, Clock, Trophy, RotateCcw } from "lucide-react"
+import { useToast } from "@/hooks/use-toast"
+import { Input } from "@/components/ui/input"
 
 interface TrackerProps {
   todayWaterIntake: number
@@ -19,6 +21,8 @@ interface TrackerProps {
   lastDrinkTime: Date
   formatTimeAgo: (d: Date) => string
   streak: number
+  isAdding?: boolean
+  canUndo?: boolean
 }
 
 export default function Tracker({
@@ -33,7 +37,37 @@ export default function Tracker({
   lastDrinkTime,
   formatTimeAgo,
   streak,
+  isAdding = false,
+  canUndo = false,
 }: TrackerProps) {
+  const [customAmount, setCustomAmount] = React.useState<string>("")
+  const { toast } = useToast()
+
+  const handleAddCustom = () => {
+    const amount = parseInt(customAmount)
+    if (isNaN(amount) || amount < 1 || amount > 5000) {
+      toast({
+        title: "Invalid amount",
+        description: "Please enter a value between 1ml and 5000ml.",
+        variant: "destructive",
+      })
+      return
+    }
+    addWater(amount)
+    setCustomAmount("")
+    toast({
+      title: "Water added!",
+      description: `${amount}ml has been added to your daily total.`,
+    })
+  }
+
+  const handleQuickAdd = (amount: number) => {
+    addWater(amount)
+    toast({
+      title: "Water added!",
+      description: `${amount}ml has been added to your daily total.`,
+    })
+  }
   return (
     <>
       {/* Main Tracker Card */}
@@ -83,46 +117,77 @@ export default function Tracker({
             </div>
 
             {/* Right column: quick add + undo + progress (fills width on small screens) */}
-            <div className="w-full max-w-lg">
+            <div className="w-full max-w-lg space-y-4">
               {/* Quick Add Buttons */}
               <div className="grid grid-cols-3 gap-3">
                 <Button
-                  onClick={() => addWater(250)}
-                  className="h-12 sm:h-16 w-full flex flex-col gap-1 bg-primary text-white hover:bg-primary/90 hover:text-black dark:text-white dark:hover:text-white cursor-pointer"
+                  onClick={() => handleQuickAdd(250)}
+                  disabled={isAdding}
+                  className="h-12 sm:h-16 w-full flex flex-col gap-1 bg-primary text-white hover:bg-primary/90 cursor-pointer"
                 >
                   <Plus className="h-4 w-4" />
                   <span className="text-xs">250ml</span>
                 </Button>
                 <Button
-                  onClick={() => addWater(500)}
-                  className="h-12 sm:h-16 w-full flex flex-col gap-1 bg-primary text-white hover:bg-primary/90 hover:text-black dark:text-white dark:hover:text-white cursor-pointer"
+                  onClick={() => handleQuickAdd(500)}
+                  disabled={isAdding}
+                  className="h-12 sm:h-16 w-full flex flex-col gap-1 bg-primary text-white hover:bg-primary/90 cursor-pointer"
                 >
                   <Plus className="h-4 w-4" />
                   <span className="text-xs">500ml</span>
                 </Button>
                 <Button
-                  onClick={() => addWater(750)}
-                  className="h-12 sm:h-16 w-full flex flex-col gap-1 bg-primary text-white hover:bg-primary/90 hover:text-black dark:text-white dark:hover:text-white cursor-pointer"
+                  onClick={() => handleQuickAdd(750)}
+                  disabled={isAdding}
+                  className="h-12 sm:h-16 w-full flex flex-col gap-1 bg-primary text-white hover:bg-primary/90 cursor-pointer"
                 >
                   <Plus className="h-4 w-4" />
                   <span className="text-xs">750ml</span>
                 </Button>
               </div>
 
+              {/* Manual Input */}
+              <div className="flex gap-2">
+                <Input
+                  type="number"
+                  placeholder="Custom ml"
+                  value={customAmount}
+                  onChange={(e) => setCustomAmount(e.target.value)}
+                  min="1"
+                  max="5000"
+                  className="flex-1"
+                />
+                <Button 
+                  onClick={handleAddCustom} 
+                  disabled={isAdding || !customAmount}
+                  className="bg-primary text-white hover:bg-primary/90"
+                >
+                  Add
+                </Button>
+              </div>
+
               {/* Undo Button */}
-              <div className="flex justify-center mt-2">
+              <div className="flex justify-center">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => undoLastIntake && undoLastIntake()}
-                  className="w-full sm:w-auto bg-primary hover:bg-primary/90 text-white dark:text-white dark:hover:text-white cursor-pointer"
+                  onClick={() => {
+                    undoLastIntake && undoLastIntake()
+                    toast({
+                      title: "Action undone",
+                      description: "The last entry has been removed.",
+                    })
+                  }}
+                  disabled={!canUndo}
+                  className="w-full sm:w-auto bg-primary hover:bg-primary/90 text-white cursor-pointer"
                 >
-                  Undo Last
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  Undo Last (30s)
                 </Button>
               </div>
 
               {/* Progress Bar */}
-              <div className="space-y-2 mt-4">
+              <div className="space-y-2">
                 <div className="flex justify-between text-sm text-muted-foreground">
                   <span>
                     Cups: {cupsCompleted}/{totalCups}
