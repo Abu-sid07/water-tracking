@@ -42,21 +42,28 @@ import { api } from "@/convex/_generated/api"
 interface AnalyticsDashboardProps {
   dailyGoal: number
   onClose: () => void
+  history: any[]
+  getDailyStats: (days: number, goalOverride?: number) => any[]
+  getWeeklyStats: (weeks: number, goalOverride?: number) => any[]
+  getCurrentStreak: (goalOverride?: number) => number
+  isLoading?: boolean
 }
 
-export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardProps) {
+export function AnalyticsDashboard({ 
+  dailyGoal, 
+  onClose,
+  history,
+  getDailyStats,
+  getWeeklyStats,
+  getCurrentStreak,
+  isLoading = false
+}: AnalyticsDashboardProps) {
   const [selectedPeriod, setSelectedPeriod] = useState<"7" | "30" | "90">("30")
   const [startDate, setStartDate] = useState<string>(() => {
     const date = new Date()
     date.setDate(date.getDate() - 30)
     return date.toISOString().split("T")[0]
   })
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // FIX #3 — Pass selectedPeriod to hook so server fetches correct range
-  // ─────────────────────────────────────────────────────────────────────────
-  const { getDailyStats, getWeeklyStats, getCurrentStreak, history, isLoading } =
-    useWaterHistory(Number.parseInt(selectedPeriod))
 
   // ─────────────────────────────────────────────────────────────────────────
   // FIX #1 — useMutation always at top level (NOT inside handleSaveAnalytics)
@@ -94,8 +101,11 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
     const hasData            = dailyStats.length > 0
     const totalDays          = hasData ? dailyStats.length : 1 // guard divide-by-zero
     const daysGoalReached    = dailyStats.filter((day) => day.goalReached).length
-    const averageDailyIntake = hasData
-      ? Math.round(dailyStats.reduce((sum, day) => sum + day.totalIntake, 0) / dailyStats.length)
+    
+    // Fix: Filter only days with intake for average daily intake calculation
+    const activeDays = dailyStats.filter(day => day.totalIntake > 0)
+    const averageDailyIntake = activeDays.length > 0
+      ? Math.round(activeDays.reduce((sum, day) => sum + day.totalIntake, 0) / activeDays.length)
       : 0
     
     const bestDay = hasData
@@ -127,6 +137,7 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
       .slice(0, 14)
       .reverse()
       .map((day) => ({
+        // Fix: Use local date formatting for x-axis
         date: new Date(day.date).toLocaleDateString("en-IN", {
           month: "short",
           day: "numeric",
@@ -151,9 +162,33 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
   // ── Loading Guard ───────────────────────────────────────────────────────
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 space-y-4">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <p className="text-muted-foreground animate-pulse">Loading your analytics data...</p>
+      <div className="space-y-6">
+        {/* Skeleton for Stats Overview */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <Card key={i} className="animate-pulse">
+              <CardContent className="p-6">
+                <div className="flex items-center gap-4">
+                  <div className="h-10 w-10 rounded-full bg-muted" />
+                  <div className="space-y-2">
+                    <div className="h-4 w-20 bg-muted rounded" />
+                    <div className="h-6 w-12 bg-muted rounded" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        
+        {/* Skeleton for Main Chart */}
+        <Card className="animate-pulse">
+          <CardHeader>
+            <div className="h-6 w-48 bg-muted rounded" />
+          </CardHeader>
+          <CardContent>
+            <div className="h-80 w-full bg-muted rounded-lg" />
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -467,31 +502,40 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-48 sm:h-64 md:h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis dataKey="date" className="text-foreground" />
-                    <YAxis className="text-foreground" />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "hsl(var(--card))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: "8px",
-                        color: "hsl(var(--foreground))",
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="percentage"
-                      stroke="#3b82f6"
-                      fill="#3b82f6"
-                      fillOpacity={0.3}
-                      name="Goal Achievement %"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
+              {dailyStats.filter(d => d.intakeCount > 0).length < 3 ? (
+                <div className="h-48 sm:h-64 md:h-80 flex flex-col items-center justify-center border-2 border-dashed rounded-lg bg-muted/20">
+                  <TrendingUp className="h-10 w-10 text-muted-foreground mb-2" />
+                  <p className="text-muted-foreground text-center px-4">
+                    Add more days of water intake to see your progress trend
+                  </p>
+                </div>
+              ) : (
+                <div className="h-48 sm:h-64 md:h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis dataKey="date" className="text-foreground" />
+                      <YAxis className="text-foreground" />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "hsl(var(--card))",
+                          border: "1px solid hsl(var(--border))",
+                          borderRadius: "8px",
+                          color: "hsl(var(--foreground))",
+                        }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="percentage"
+                        stroke="#3b82f6"
+                        fill="#3b82f6"
+                        fillOpacity={0.3}
+                        name="Goal Achievement %"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -502,56 +546,45 @@ export function AnalyticsDashboard({ dailyGoal, onClose }: AnalyticsDashboardPro
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-foreground">
             <Clock className="h-5 w-5" />
-            Recent Activity
+            Recent Activity (Last 10)
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3 max-h-60 overflow-y-auto">
-            {(history.length > 0
-              ? history.slice(0, 10)
-              : (() => {
-                  try {
-                    const currentUser = localStorage.getItem("currentUser")
-                    const userId = currentUser ? JSON.parse(currentUser).id : null
-                    const raw = userId ? localStorage.getItem(`recentActivity_${userId}`) : null
-                    return raw ? JSON.parse(raw) : []
-                  } catch (e) {
-                    return []
-                  }
-                })()
-            ).map((entry: any) => (
+          <div className="space-y-3 pr-2">
+            {(history.length > 0 ? history.slice(0, 10) : []).map((entry: any) => (
               <div
                 key={entry.id}
-                className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
+                className="flex items-center justify-between p-3 bg-muted/50 rounded-lg hover:bg-muted transition-colors border border-border/50"
               >
                 <div className="flex items-center gap-3">
-                  <div className="p-1 bg-primary/10 rounded">
+                  <div className="p-1.5 bg-primary/10 rounded-md">
                     <Droplets className="h-4 w-4 text-primary" />
                   </div>
                   <div>
-                    <p className="font-medium text-foreground">{entry.amount}ml</p>
-                    <p className="text-xs text-foreground">
-                      {new Date(entry.timestamp).toLocaleDateString()} at{" "}
-                      {new Date(entry.timestamp).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-foreground">{entry.amount}ml</p>
+                      <Badge variant="secondary" className="text-[10px] h-4 px-1 uppercase tracking-tighter font-bold">
+                        {entry.amount >= 500 ? "Large" : entry.amount >= 250 ? "Medium" : "Small"}
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                      <Calendar className="h-3 w-3" />
+                      {new Date(entry.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      <span className="text-muted-foreground/30">•</span>
+                      <Clock className="h-3 w-3" />
+                      {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </p>
                   </div>
                 </div>
-                <Badge variant="outline" className="text-xs">
-                  {entry.amount >= 500
-                    ? "Large"
-                    : entry.amount >= 250
-                    ? "Medium"
-                    : "Small"}
-                </Badge>
               </div>
             ))}
             {history.length === 0 && (
-              <p className="text-sm text-foreground text-center py-4">
-                No activity recorded yet. Start tracking your water intake!
-              </p>
+              <div className="flex flex-col items-center justify-center py-8 text-center space-y-2">
+                <Clock className="h-8 w-8 text-muted-foreground/50" />
+                <p className="text-sm text-muted-foreground">
+                  No activity recorded yet. <br /> Start tracking your water intake!
+                </p>
+              </div>
             )}
           </div>
         </CardContent>

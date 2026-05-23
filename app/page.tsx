@@ -30,7 +30,7 @@ interface UserProfile {
 }
 
 export default function Page() {
-	const { user, logout, isAuthenticated } = useAppAuth()
+	const { user, logout, isAuthenticated, isLoading } = useAppAuth()
 	const [showAuthModal, setShowAuthModal] = useState(false)
 	const [authMode, setAuthMode] = useState<'login' | 'signup'>('login')
 
@@ -41,7 +41,18 @@ export default function Page() {
 	const [showReminder, setShowReminder] = useState(false)
 	const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
 
-	const { addWaterIntake, undoLastIntake, todayWaterIntake, history } = useWaterHistory()
+	const { 
+		addWaterIntake, 
+		undoLastIntake, 
+		todayWaterIntake, 
+		history, 
+		isAdding, 
+		canUndo, 
+		getCurrentStreak,
+		getDailyStats,
+		getWeeklyStats,
+		isLoading: isHistoryLoading
+	} = useWaterHistory(7)
 	const { achievements, userStats, newlyUnlocked, dismissNewAchievements, getProgressPercentage, updateProgress } = useAchievements()
 
 	const { requestPermission } = useNotifications()
@@ -83,34 +94,81 @@ export default function Page() {
 		requestPermission()
 	}, [requestPermission])
 
-	// load profile from localStorage when authenticated
+	// load profile from user-specific localStorage when authenticated
 	useEffect(() => {
-		if (!isAuthenticated || !user?.id) return
-		try {
-			const raw = localStorage.getItem(`userProfile_${user.id}`)
-			if (raw) setUserProfile(JSON.parse(raw))
-			else setShowProfileSetup(true)
-		} catch (e) {
-			// ignore
+		if (!isAuthenticated || !user?.email) {
+			setUserProfile(null)
+			setShowProfileSetup(false)
+			return
 		}
-	}, [isAuthenticated, user?.id])
 
-	useEffect(() => {
-		if (userProfile && user?.id) {
-			try { localStorage.setItem(`userProfile_${user.id}`, JSON.stringify(userProfile)) } catch (e) {}
+		try {
+			const storageKey = `water_data_${user.email}`
+			const raw = localStorage.getItem(storageKey)
+			
+			if (raw) {
+				const data = JSON.parse(raw)
+				if (data.profile && Object.keys(data.profile).length > 0) {
+					setUserProfile(data.profile)
+					setShowProfileSetup(false)
+				} else {
+					// User exists in storage but no profile - prompt setup
+					setUserProfile({
+						name: user.name || "",
+						email: user.email,
+						weight: 70,
+						activityLevel: "moderate",
+						climate: "moderate"
+					})
+					setShowProfileSetup(true)
+				}
+			} else {
+				// New user - initialize storage and prompt setup
+				const initialData = {
+					entries: [],
+					dailyGoal: 2000,
+					profile: {
+						name: user.name || "",
+						email: user.email,
+						weight: 70,
+						activityLevel: "moderate",
+						climate: "moderate"
+					}
+				}
+				localStorage.setItem(storageKey, JSON.stringify(initialData))
+				setUserProfile(initialData.profile as UserProfile)
+				setShowProfileSetup(true)
+			}
+		} catch (e) {
+			console.error("Failed to load profile from storage:", e)
 		}
-	}, [userProfile, user?.id])
+	}, [isAuthenticated, user?.email, user?.name])
+
+	// Save profile changes back to user-specific storage
+	useEffect(() => {
+		if (userProfile && user?.email) {
+			try {
+				const storageKey = `water_data_${user.email}`
+				const raw = localStorage.getItem(storageKey)
+				const currentData = raw ? JSON.parse(raw) : { entries: [], dailyGoal: 2000, profile: {} }
+				
+				// Only update if profile actually changed to avoid infinite loops
+				if (JSON.stringify(currentData.profile) !== JSON.stringify(userProfile)) {
+					const updatedData = { 
+						...currentData, 
+						profile: userProfile,
+						dailyGoal: calculateDailyGoal(userProfile)
+					}
+					localStorage.setItem(storageKey, JSON.stringify(updatedData))
+				}
+			} catch (e) {
+				console.error("Failed to save profile to storage:", e)
+			}
+		}
+	}, [userProfile, user?.email])
 
 	const addWater = (amount: number) => {
-		try {
-			// record local recent activity for immediate UX
-			const entry = { id: `${Date.now()}`, amount, timestamp: Date.now(), date: new Date().toISOString().split('T')[0] }
-			const raw = localStorage.getItem(`recentActivity_${user?.id}`)
-			const arr = raw ? JSON.parse(raw) : []
-			arr.unshift(entry)
-			localStorage.setItem(`recentActivity_${user?.id}`, JSON.stringify(arr.slice(0, 10)))
-		} catch (e) {}
-
+		// updateProgress and history will handle storage via hooks
 		addWaterIntake(amount)
 		updateProgress(amount, dailyGoal, 0) // streak will be recalculated in hook
 		reminderTimer.resetTimer()
@@ -121,10 +179,23 @@ export default function Page() {
 		setUserProfile(null)
 	}
 
+	// 1. First check if Auth is still initializing
+	if (isLoading) {
+		return (
+			<div className="min-h-screen flex items-center justify-center bg-background">
+				<div className="flex flex-col items-center gap-4">
+					<Droplets className="h-12 w-12 text-primary animate-bounce" />
+					<p className="text-muted-foreground animate-pulse">Checking your hydration status...</p>
+				</div>
+			</div>
+		)
+	}
+
+	// 2. If not authenticated, show login page immediately
 	if (!isAuthenticated) {
 		return (
 			<div className="min-h-screen flex items-center justify-center p-6 bg-background">
-				<div className="max-w-md text-center space-y-6">
+				<div className="max-w-md text-center space-y-6 animate-in fade-in zoom-in duration-500">
 					<div className="flex flex-col items-center gap-2">
 						<Droplets className="h-12 w-12 text-primary" />
 						<h1 className="text-3xl font-bold">Stay Hydrated</h1>
@@ -140,6 +211,18 @@ export default function Page() {
 					</div>
 				</div>
 				<AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} defaultMode={authMode} />
+			</div>
+		)
+	}
+
+	// 3. If authenticated but history is still loading, show a different loading message
+	if (isHistoryLoading) {
+		return (
+			<div className="min-h-screen flex items-center justify-center bg-background">
+				<div className="flex flex-col items-center gap-4">
+					<Droplets className="h-12 w-12 text-primary animate-bounce" />
+					<p className="text-muted-foreground animate-pulse">Loading your hydration data...</p>
+				</div>
 			</div>
 		)
 	}
@@ -237,7 +320,15 @@ export default function Page() {
 				</nav>
 
 				{currentView === 'analytics' ? (
-					<AnalyticsDashboard dailyGoal={dailyGoal} onClose={() => setCurrentView('tracker')} />
+					<AnalyticsDashboard 
+						dailyGoal={dailyGoal} 
+						onClose={() => setCurrentView('tracker')} 
+						history={history}
+						getDailyStats={getDailyStats}
+						getWeeklyStats={getWeeklyStats}
+						getCurrentStreak={getCurrentStreak}
+						isLoading={isHistoryLoading}
+					/>
 				) : currentView === 'achievements' ? (
 					<AchievementsGallery achievements={achievements} userStats={userStats} getProgressPercentage={getProgressPercentage} onClose={() => setCurrentView('tracker')} />
 				) : currentView === 'profile' ? (
@@ -267,7 +358,9 @@ export default function Page() {
 							const hrs = Math.floor(mins / 60)
 							return `${hrs}h ago`
 						}}
-						streak={0}
+						streak={getCurrentStreak()}
+						isAdding={isAdding}
+						canUndo={canUndo}
 					/>
 				)}
 
